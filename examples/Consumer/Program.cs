@@ -20,6 +20,8 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Tasks;
+using Amib.Threading;
 
 
 /// <summary>
@@ -34,8 +36,10 @@ namespace Confluent.Kafka.Examples.ConsumerExample
         ///         - offsets are manually committed.
         ///         - no extra thread is created for the Poll (Consume) loop.
         /// </summary>
-        public static void Run_Consume(string brokerList, List<string> topics, CancellationToken cancellationToken)
+        public static async Task Run_Consume(string brokerList, List<string> topics, CancellationToken cancellationToken)
         {
+
+
             var config = new ConsumerConfig
             {
                 BootstrapServers = brokerList,
@@ -52,6 +56,7 @@ namespace Confluent.Kafka.Examples.ConsumerExample
 
             const int commitPeriod = 5;
 
+
             // Note: If a key or value deserializer is not set (as is the case below), the 
             // deserializer corresponding to the appropriate type from Confluent.Kafka.Deserializers
             // will be used automatically (where available). The default deserializer for string
@@ -65,12 +70,12 @@ namespace Confluent.Kafka.Examples.ConsumerExample
                 {
                     // Since a cooperative assignor (CooperativeSticky) has been configured, the
                     // partition assignment is incremental (adds partitions to any existing assignment).
-                    Console.WriteLine(
-                        "Partitions incrementally assigned: [" +
-                        string.Join(',', partitions.Select(p => p.Partition.Value)) +
-                        "], all: [" +
-                        string.Join(',', c.Assignment.Concat(partitions).Select(p => p.Partition.Value)) +
-                        "]");
+                    //Console.WriteLine(
+                    //    "Partitions incrementally assigned: [" +
+                    //    string.Join(',', partitions.Select(p => p.Partition.Value)) +
+                    //    "], all: [" +
+                    //    string.Join(',', c.Assignment.Concat(partitions).Select(p => p.Partition.Value)) +
+                    //    "]");
 
                     // Possibly manually specify start offsets by returning a list of topic/partition/offsets
                     // to assign to, e.g.:
@@ -80,19 +85,19 @@ namespace Confluent.Kafka.Examples.ConsumerExample
                 {
                     // Since a cooperative assignor (CooperativeSticky) has been configured, the revoked
                     // assignment is incremental (may remove only some partitions of the current assignment).
-                    var remaining = c.Assignment.Where(atp => partitions.Where(rtp => rtp.TopicPartition == atp).Count() == 0);
-                    Console.WriteLine(
-                        "Partitions incrementally revoked: [" +
-                        string.Join(',', partitions.Select(p => p.Partition.Value)) +
-                        "], remaining: [" +
-                        string.Join(',', remaining.Select(p => p.Partition.Value)) +
-                        "]");
+                    //var remaining = c.Assignment.Where(atp => partitions.Where(rtp => rtp.TopicPartition == atp).Count() == 0);
+                    //Console.WriteLine(
+                    //    "Partitions incrementally revoked: [" +
+                    //    string.Join(',', partitions.Select(p => p.Partition.Value)) +
+                    //    "], remaining: [" +
+                    //    string.Join(',', remaining.Select(p => p.Partition.Value)) +
+                    //    "]");
                 })
                 .SetPartitionsLostHandler((c, partitions) =>
                 {
                     // The lost partitions handler is called when the consumer detects that it has lost ownership
                     // of its assignment (fallen out of the group).
-                    Console.WriteLine($"Partitions were lost: [{string.Join(", ", partitions)}]");
+                    //Console.WriteLine($"Partitions were lost: [{string.Join(", ", partitions)}]");
                 })
                 .Build())
             {
@@ -100,21 +105,39 @@ namespace Confluent.Kafka.Examples.ConsumerExample
 
                 try
                 {
+
+
+
                     while (true)
                     {
                         try
                         {
-                            var consumeResult = consumer.Consume(cancellationToken);
+                            SmartThreadPool smartThreadPool = new SmartThreadPool(1000, 1);
 
-                            if (consumeResult.IsPartitionEOF)
+
+                            var msg = smartThreadPool.QueueWorkItem(GetMessage, consumer);
+                            var consumeResultAwait = await msg.Result;
+                            var consumeResult = (ConsumeResult<Ignore, string>)consumeResultAwait;
+                            if (consumeResult != null && consumeResult.Message != null)
                             {
-                                Console.WriteLine(
-                                    $"Reached end of topic {consumeResult.Topic}, partition {consumeResult.Partition}, offset {consumeResult.Offset}.");
+                                Console.WriteLine($"Receive {consumeResult.Message.Value}");
 
-                                continue;
+                                smartThreadPool.QueueWorkItem(ProcessMessage, consumeResult.Message.Value);
                             }
+                            Console.WriteLine($"ActiveThreads: {smartThreadPool.ActiveThreads}");
 
-                            Console.WriteLine($"Received message at {consumeResult.TopicPartitionOffset}: {consumeResult.Message.Value}");
+
+
+                            //if (consumeResult.IsPartitionEOF)
+                            //{
+                            //    Console.WriteLine(
+                            //        $"Reached end of topic {consumeResult.Topic}, partition {consumeResult.Partition}, offset {consumeResult.Offset}.");
+
+                            //    continue;
+                            //}
+
+                            //Console.WriteLine($"Received message at {consumeResult.TopicPartitionOffset}: {consumeResult.Message.Value}");
+                            //await Task.Delay(5000, cancellationToken);
 
                             if (consumeResult.Offset % commitPeriod == 0)
                             {
@@ -146,6 +169,19 @@ namespace Confluent.Kafka.Examples.ConsumerExample
                     consumer.Close();
                 }
             }
+        }
+
+        private static async Task<object> GetMessage(IConsumer<Ignore, string> consumer)
+        {
+            await Task.Delay(2000);
+            var msg = consumer.Consume();
+            return msg;
+        }
+
+        private static async Task ProcessMessage(string msg)
+        {
+            await Task.Delay(3000);
+            Console.WriteLine($"Done process {msg}");
         }
 
         /// <summary>
@@ -204,17 +240,17 @@ namespace Confluent.Kafka.Examples.ConsumerExample
         private static void PrintUsage()
             => Console.WriteLine("Usage: .. <subscribe|manual> <broker,broker,..> <topic> [topic..]");
 
-        public static void Main(string[] args)
-        {
-            if (args.Length < 3)
-            {
-                PrintUsage();
-                return;
-            }
 
-            var mode = args[0];
-            var brokerList = args[1];
-            var topics = args.Skip(2).ToList();
+
+        public static async Task Main(string[] args)
+        {
+
+
+            //var mode = args[0];
+            string brokerList = "192.168.64.129:9092";
+            string topicName = "mytopic";
+            var topics = new List<string>();
+            topics.Add(topicName);
 
             Console.WriteLine($"Started consumer, Ctrl-C to stop consuming");
 
@@ -224,18 +260,20 @@ namespace Confluent.Kafka.Examples.ConsumerExample
                 cts.Cancel();
             };
 
-            switch (mode)
-            {
-                case "subscribe":
-                    Run_Consume(brokerList, topics, cts.Token);
-                    break;
-                case "manual":
-                    Run_ManualAssign(brokerList, topics, cts.Token);
-                    break;
-                default:
-                    PrintUsage();
-                    break;
-            }
+            await Run_Consume(brokerList, topics, cts.Token);
+
+            //switch (mode)
+            //{
+            //    case "subscribe":
+            //        Run_Consume(brokerList, topics, cts.Token);
+            //        break;
+            //    case "manual":
+            //        Run_ManualAssign(brokerList, topics, cts.Token);
+            //        break;
+            //    default:
+            //        PrintUsage();
+            //        break;
+            //}
         }
     }
 }

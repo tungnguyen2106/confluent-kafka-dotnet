@@ -30,14 +30,10 @@ namespace Confluent.Kafka.Examples.ProducerExample
     {
         public static async Task Main(string[] args)
         {
-            if (args.Length != 2)
-            {
-                Console.WriteLine("Usage: .. brokerList topicName");
-                return;
-            }
+            
 
-            string brokerList = args[0];
-            string topicName = args[1];
+            string brokerList = "192.168.64.129:9092";
+            string topicName = "mytopic";
 
             var config = new ProducerConfig { BootstrapServers = brokerList };
 
